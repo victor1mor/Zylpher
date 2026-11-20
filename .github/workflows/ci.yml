@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      release_gate:
+        description: Validar Windows e macOS antes da tag estável
+        type: boolean
+        default: false
+
+# Push novo cancela a execução anterior do mesmo branch: ninguém paga por resultado velho.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-platform:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Test
+        run: go test -mod=readonly ./...
+      - name: Build
+        run: go build -mod=readonly ./cmd/... ./client
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: debian:13
+    steps:
+      - name: Prepare Debian
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates gcc git libc6-dev systemd
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Race
+        run: go test -race ./...
+      - name: Build
+        run: go build -buildvcs=false -o zylpher ./cmd/zylpher
+      - name: Verify systemd unit
+        run: |
+          useradd --system --home-dir /var/lib/zylpher --shell /usr/sbin/nologin zylpher
+          install -d -o zylpher -g zylpher -m 0700 /var/lib/zylpher
+          install -d -o root -g zylpher -m 0750 /etc/zylpher
+          install -o root -g root -m 0755 zylpher /usr/local/bin/zylpher
+          install -o root -g zylpher -m 0640 deploy/zylpher.env.example /etc/zylpher/zylpher.env
+          install -o root -g root -m 0644 deploy/zylpher.service /etc/systemd/system/zylpher.service
+          systemd-analyze verify /etc/systemd/system/zylpher.service
+
+  service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Build
+        run: go build -buildvcs=false -o zylpher ./cmd/zylpher
+      - name: Install service
+        run: |
+          sudo useradd --system --home-dir /var/lib/zylpher --shell /usr/sbin/nologin zylpher
+          sudo install -d -o zylpher -g zylpher -m 0700 /var/lib/zylpher
+          sudo install -d -o root -g zylpher -m 0750 /etc/zylpher
+          sudo install -o root -g root -m 0755 zylpher /usr/local/bin/zylpher
+          sudo install -o root -g zylpher -m 0640 deploy/zylpher.env.example /etc/zylpher/zylpher.env
+          sudo sed -i 's/^ZYLPHER_API_KEY=$/ZYLPHER_API_KEY=ci-test-key/' /etc/zylpher/zylpher.env
+          sudo install -o root -g root -m 0644 deploy/zylpher.service /etc/systemd/system/zylpher.service
+          sudo systemctl daemon-reload
+      - name: Start, restart and stop
+        run: |
+          health() {
+            for attempt in 1 2 3 4 5; do
+              if curl --fail --silent -H 'Authorization: Bearer ci-test-key' http://127.0.0.1:8080/health; then
+                return 0
+              fi
+              sleep 1
+            done
+            return 1
+          }
+          sudo systemctl start zylpher
+          health
+          sudo systemctl restart zylpher
+          health
+          sudo systemctl stop zylpher
+          ! sudo systemctl is-active --quiet zylpher

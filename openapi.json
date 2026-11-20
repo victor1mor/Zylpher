@@ -1,0 +1,355 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Zylpher API",
+    "version": "1.0.0",
+    "description": "Envie a chave ZYLPHER_API_KEY como Bearer nas rotas da API. Os corpos JSON têm limite de 64 KiB. Os webhooks saem do Zylpher para a URL configurada e usam HMAC."
+  },
+  "servers": [{ "url": "http://127.0.0.1:8080", "description": "Endereço padrão" }],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Verificar se o servidor está ativo",
+        "responses": {
+          "200": {
+            "description": "Servidor ativo.",
+            "content": { "application/json": { "schema": {
+              "type": "object",
+              "required": ["status"],
+              "properties": { "status": { "const": "ok" } }
+            } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "summary": "Consultar as métricas da fila de webhooks",
+        "responses": {
+          "200": {
+            "description": "Formato Prometheus 0.0.4. Exporta zylpher_webhook_pending, zylpher_webhook_delivery_failures_total, zylpher_webhook_retries_total e zylpher_webhook_oldest_pending_age_seconds.",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "description": "Falha ao ler a fila (metrics_unavailable).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/sessions": {
+      "get": {
+        "operationId": "listSessions",
+        "summary": "Listar sessões",
+        "responses": {
+          "200": { "description": "Sessões por ordem de nome.", "content": {
+            "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Session" } } }
+          } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "post": {
+        "operationId": "createSession",
+        "summary": "Criar uma sessão em STOPPED",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object",
+          "required": ["name"],
+          "properties": { "name": { "$ref": "#/components/schemas/SessionName" } }
+        } } } },
+        "responses": {
+          "201": { "description": "Sessão criada.", "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Session" } }
+          } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/sessions/{name}": {
+      "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
+      "get": {
+        "operationId": "getSession",
+        "summary": "Consultar a sessão e atualizar seu estado real",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Session" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/sessions/{name}/qr": {
+      "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
+      "get": {
+        "operationId": "getSessionQR",
+        "summary": "Consultar o QR textual do pareamento",
+        "responses": {
+          "200": {
+            "description": "QR disponível. O código permite vincular a conta e deve ser exibido apenas localmente.",
+            "content": { "application/json": { "schema": {
+              "type": "object",
+              "required": ["session", "code"],
+              "properties": {
+                "session": { "$ref": "#/components/schemas/SessionName" },
+                "code": { "type": "string" }
+              }
+            } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/sessions/{name}/start": {
+      "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
+      "post": {
+        "operationId": "startSession",
+        "summary": "Iniciar a sessão",
+        "description": "Consulte o QR se a sessão estiver em STARTING. Uma sessão já em STARTING ou WORKING retorna conflito.",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Session" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/sessions/{name}/stop": {
+      "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
+      "post": {
+        "operationId": "stopSession",
+        "summary": "Parar a sessão",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Session" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/sessions/{name}/messages/text": {
+      "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
+      "post": {
+        "operationId": "sendText",
+        "summary": "Enviar texto em uma sessão WORKING",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object",
+          "required": ["to", "text"],
+          "properties": {
+            "to": { "$ref": "#/components/schemas/Destination" },
+            "text": { "type": "string", "pattern": "\\S" }
+          }
+        } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/MessageSent" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/RemoteFailure" },
+          "504": { "$ref": "#/components/responses/SendTimeout" }
+        }
+      }
+    },
+    "/sessions/{name}/messages/media": {
+      "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
+      "post": {
+        "operationId": "sendMedia",
+        "summary": "Enviar um arquivo em uma sessão WORKING",
+        "description": "Envie os bytes no corpo. Use JPEG, PNG ou WebP para image, OGG, MPEG, MP4, AAC ou AMR para audio, MP4 ou 3GPP para video, e qualquer Content-Type válido para document.",
+        "parameters": [
+          { "name": "to", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/Destination" } },
+          { "name": "kind", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/MediaKind" } },
+          { "name": "caption", "in": "query", "description": "Legenda de imagem, vídeo ou documento.", "schema": { "type": "string", "maxLength": 1024 } },
+          { "name": "file_name", "in": "query", "description": "Nome sugerido do documento, sem barras ou caracteres de controle.", "schema": { "type": "string", "maxLength": 255 } },
+          { "name": "voice", "in": "query", "description": "Use true para nota de voz com kind=audio e Content-Type audio/ogg (Opus).", "schema": { "type": "boolean", "default": false } }
+        ],
+        "requestBody": { "required": true, "description": "Arquivo não vazio com até ZYLPHER_MEDIA_MAX_BYTES bytes.",
+          "content": { "image/jpeg": {}, "image/png": {}, "image/webp": {}, "audio/ogg": {}, "audio/mpeg": {}, "audio/mp4": {},
+            "audio/aac": {}, "audio/amr": {}, "video/mp4": {}, "video/3gpp": {}, "application/octet-stream": {}, "*/*": {} }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/MessageSent" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "$ref": "#/components/responses/MediaTooLarge" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "$ref": "#/components/responses/RemoteFailure" },
+          "504": { "$ref": "#/components/responses/SendTimeout" }
+        }
+      }
+    },
+    "/sessions/{name}/media/{id}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/SessionName" },
+        { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/MediaID" } }
+      ],
+      "get": {
+        "operationId": "downloadMedia",
+        "summary": "Baixar um anexo recebido",
+        "responses": {
+          "200": {
+            "description": "Arquivo preservado no armazenamento local até exclusão ou limpeza. Content-Type original, com fallback application/octet-stream.",
+            "headers": {
+              "X-Zylpher-SHA256": { "description": "SHA-256 hexadecimal dos bytes.", "required": true, "schema": { "$ref": "#/components/schemas/SHA256" } },
+              "Content-Disposition": { "required": true, "schema": { "const": "attachment" } },
+              "Content-Length": { "required": true, "schema": { "type": "integer", "minimum": 0 } },
+              "X-Content-Type-Options": { "required": true, "schema": { "const": "nosniff" } }
+            },
+            "content": { "application/octet-stream": {}, "*/*": {} }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteMedia",
+        "summary": "Excluir um anexo recebido",
+        "responses": {
+          "204": { "description": "Anexo excluído. Corpo vazio." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "webhookEvent": {
+      "post": {
+        "operationId": "receiveZylpherEvent",
+        "summary": "Receber um evento do Zylpher",
+        "description": "POST para ZYLPHER_WEBHOOK_URL. Verifique o HMAC-SHA256 sobre os bytes exatos, usando ZYLPHER_WEBHOOK_SECRET. A entrega pode se repetir mesmo após um 2xx se o processo cair antes de remover o evento da fila.",
+        "security": [],
+        "parameters": [
+          { "name": "X-Zylpher-Signature", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^sha256=[0-9a-f]{64}$" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebhookEvent" } } }
+        },
+        "responses": {
+          "2XX": { "description": "Evento aceito. A entrega é confirmada." },
+          "default": { "description": "Evento permanece na fila para retentativa." }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Valor de ZYLPHER_API_KEY." }
+    },
+    "parameters": {
+      "SessionName": { "name": "name", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/SessionName" } }
+    },
+    "responses": {
+      "Session": { "description": "Estado da sessão.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } } },
+      "MessageSent": { "description": "WhatsApp aceitou o envio.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResult" } } } },
+      "BadRequest": { "description": "Entrada inválida (invalid_input), JSON inválido ou acima de 64 KiB (invalid_json) ou falha de leitura do corpo de mídia (invalid_body).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Unauthorized": { "description": "Chave Bearer ausente ou inválida (unauthorized).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NotFound": { "description": "Sessão ou anexo ausente (not_found), QR indisponível (qr_unavailable) ou armazenamento de anexos desativado (media_disabled).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Conflict": { "description": "Sessão já existente ou em andamento (conflict), ou envio sem sessão WORKING (session_not_working).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "MediaTooLarge": { "description": "Arquivo maior que ZYLPHER_MEDIA_MAX_BYTES (media_too_large).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "InternalError": { "description": "Falha interna (internal_error ou encode_error).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "RemoteFailure": { "description": "Falha de envio no WhatsApp (remote_failure).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "SendTimeout": { "description": "Prazo de envio excedido (send_timeout).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "SessionName": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+      "MediaID": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" },
+      "SHA256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+      "MediaKind": { "type": "string", "enum": ["image", "audio", "video", "document"] },
+      "Destination": {
+        "type": "string",
+        "description": "Número de 8 a 15 dígitos com DDI, sem zero inicial e com + opcional, ou JID individual @s.whatsapp.net ou @lid. Para responder, use payload.from de message.received na mesma sessão. Identificadores de dispositivo são removidos.",
+        "examples": ["12345@lid"]
+      },
+      "Session": {
+        "type": "object",
+        "required": ["name", "status", "created_at", "updated_at"],
+        "properties": {
+          "name": { "$ref": "#/components/schemas/SessionName" },
+          "status": { "type": "string", "enum": ["STOPPED", "STARTING", "WORKING", "FAILED"] },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MessageResult": {
+        "type": "object",
+        "required": ["id", "session", "to", "status", "timestamp"],
+        "properties": {
+          "id": { "type": "string" },
+          "session": { "$ref": "#/components/schemas/SessionName" },
+          "to": { "$ref": "#/components/schemas/Destination" },
+          "status": { "const": "sent" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ReceivedMessage": {
+        "type": "object",
+        "required": ["id", "session", "from", "to", "text", "timestamp"],
+        "properties": {
+          "id": { "type": "string" },
+          "session": { "$ref": "#/components/schemas/SessionName" },
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "text": { "type": "string", "description": "Texto da mensagem ou legenda do anexo, que pode ser vazia." },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "media": { "$ref": "#/components/schemas/ReceivedMedia" },
+          "media_error": { "type": "string", "enum": ["too_large", "download_failed", "no_store"] }
+        }
+      },
+      "ReceivedMedia": {
+        "type": "object",
+        "required": ["id", "kind", "mime_type", "size", "sha256"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/MediaID" },
+          "kind": { "$ref": "#/components/schemas/MediaKind" },
+          "mime_type": { "type": "string" },
+          "size": { "type": "integer", "format": "int64", "minimum": 0 },
+          "sha256": { "$ref": "#/components/schemas/SHA256" },
+          "voice": { "type": "boolean" },
+          "file_name": { "type": "string" }
+        }
+      },
+      "WebhookEvent": {
+        "type": "object",
+        "required": ["id", "event", "session", "timestamp", "payload"],
+        "properties": {
+          "id": { "type": "string", "description": "ID da mensagem ou nome da sessão para session.status." },
+          "event": { "type": "string" },
+          "session": { "$ref": "#/components/schemas/SessionName" },
+          "timestamp": { "type": "integer", "format": "int64", "description": "Timestamp Unix em milissegundos." },
+          "payload": { "type": "object" }
+        },
+        "oneOf": [
+          { "properties": { "event": { "const": "message.sent" }, "payload": { "$ref": "#/components/schemas/MessageResult" } } },
+          { "properties": { "event": { "const": "message.received" }, "payload": { "$ref": "#/components/schemas/ReceivedMessage" } } },
+          { "properties": { "event": { "const": "session.status" }, "payload": { "$ref": "#/components/schemas/Session" } } }
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error", "message"],
+        "properties": { "error": { "type": "string" }, "message": { "type": "string" } }
+      }
+    }
+  }
+}

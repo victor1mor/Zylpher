@@ -1,0 +1,25 @@
+[Unit]
+Description=Zylpher WhatsApp engine
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=zylpher
+Group=zylpher
+WorkingDirectory=/var/lib/zylpher
+EnvironmentFile=/etc/zylpher/zylpher.env
+ExecStart=/usr/local/bin/zylpher
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGINT
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/zylpher
+
+[Install]
+WantedBy=multi-user.target

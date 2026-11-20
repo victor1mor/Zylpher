@@ -1,0 +1,8 @@
+/zylpher.exe
+/data/
+/events.db
+/events.db-*
+/zylpher-*.tgz.gpg
+.env
+*.env
+!*.env.example

@@ -1,0 +1,19 @@
+[Unit]
+Description=Zylpher local webhook receiver
+
+[Service]
+DynamicUser=yes
+StateDirectory=zylpher-webhook-receiver
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/zylpher-webhook-receiver
+EnvironmentFile=/etc/zylpher/webhook-receiver.env
+ExecStart=/usr/local/bin/zylpher-webhook-receiver
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
