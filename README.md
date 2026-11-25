@@ -14,23 +14,63 @@ independente baseado no `whatsmeow`.
 
 ## Requisitos
 
-- Para compilar o motor e o receptor, instale Go 1.27.4 ou uma versão mais
-  recente seguindo as [instruções oficiais de instalação do Go](https://go.dev/doc/install).
-  O [go.mod](go.mod) indica a toolchain Go 1.27.4 e declara Go 1.26.0
-  como versão mínima do módulo.
+Para instalar a partir dos binários, baixe um pacote da
+[release v1.2.3](https://github.com/victor1mor/Zylpher/releases/tag/v1.2.3)
+para o seu sistema e arquitetura. Os pacotes incluem `zylpher`,
+`zylpher-probe` e `zylpher-webhook-receiver`.
+
+Para compilar o motor e o receptor, instale Go 1.27.4 ou uma versão mais
+recente seguindo as [instruções oficiais de instalação do Go](https://go.dev/doc/install).
+O [go.mod](go.mod) indica a toolchain Go 1.27.4 e declara Go 1.26.0
+como versão mínima do módulo.
 
 ## Instalar como serviço no Debian 13
 
-Clone o repositório e entre no diretório do código. Em um Debian 13 com
-`systemd`, instale os utilitários e confira a versão do Go antes de compilar.
+Em um Debian 13 com `systemd`, use uma conta com `sudo`.
+
+### Baixar e conferir os binários
+
+Em uma pasta de trabalho, instale os utilitários e baixe o pacote `amd64`
+ou `arm64` correspondente ao Debian. O comando só extrai o arquivo depois
+de conferir o SHA-256.
+
+```bash
+sudo apt update
+sudo apt install ca-certificates curl openssl
+
+arquitetura=$(dpkg --print-architecture)
+case "$arquitetura" in
+  amd64|arm64) ;;
+  *) printf 'Arquitetura sem pacote: %s\n' "$arquitetura" >&2; exit 1 ;;
+esac
+
+versao=v1.2.3
+pacote="zylpher-$versao-linux-$arquitetura.tar.gz"
+release="https://github.com/victor1mor/Zylpher/releases/download/$versao"
+curl -fLO "$release/$pacote" &&
+  curl -fLO "$release/SHA256SUMS" &&
+  awk -v pacote="$pacote" '$2 == pacote' SHA256SUMS | sha256sum --check - &&
+  tar -xzf "$pacote" &&
+  cd "${pacote%.tar.gz}"
+```
+
+### Compilar no Debian 13
+
+Para instalar a partir do código-fonte, clone a tag e compile na raiz do
+repositório. Depois, siga o mesmo procedimento de configuração do serviço.
 
 ```bash
 sudo apt update
 sudo apt install ca-certificates curl git openssl
-go version
-go build -o zylpher ./cmd/zylpher
-go build -o zylpher-probe ./cmd/zylpher-probe
+git clone --branch v1.2.3 --depth 1 https://github.com/victor1mor/Zylpher.git
+cd Zylpher
+go build -mod=readonly -o zylpher ./cmd/zylpher
+go build -mod=readonly -o zylpher-probe ./cmd/zylpher-probe
 ```
+
+### Configurar e iniciar o serviço
+
+Execute os comandos a partir da pasta extraída ou do clone após a compilação.
 
 Crie o usuário do serviço, instale os binários e gere a chave da API. O bloco
 preserva o arquivo de ambiente se ele já existir. Para configurar webhooks,
@@ -111,8 +151,40 @@ exibido apenas localmente.
 
 ## Executar no Windows
 
-Na raiz do repositório, compile e inicie o servidor em uma janela separada.
-Use o mesmo PowerShell para as chamadas à API.
+### Baixar e conferir os binários no Windows
+
+Abra o PowerShell em uma pasta de trabalho. Baixe o ZIP da arquitetura do
+Windows e confira o SHA-256 antes de extrair.
+
+```powershell
+$arquitetura = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+    'X64'   { 'amd64' }
+    'Arm64' { 'arm64' }
+    default { throw 'Esta arquitetura do Windows não tem pacote na release.' }
+}
+
+$versao = 'v1.2.3'
+$pasta = "zylpher-$versao-windows-$arquitetura"
+$pacote = "$pasta.zip"
+$release = "https://github.com/victor1mor/Zylpher/releases/download/$versao"
+Invoke-WebRequest -UseBasicParsing -Uri "$release/$pacote" -OutFile $pacote -ErrorAction Stop
+Invoke-WebRequest -UseBasicParsing -Uri "$release/SHA256SUMS" -OutFile SHA256SUMS -ErrorAction Stop
+
+$linhas = @(Get-Content -LiteralPath SHA256SUMS | Where-Object { $_.EndsWith("  $pacote") })
+if ($linhas.Count -ne 1) { throw 'O SHA256SUMS não contém uma entrada única para o pacote.' }
+$esperado = ($linhas[0] -split '\s+', 2)[0]
+if ((Get-FileHash -LiteralPath $pacote -Algorithm SHA256).Hash -ne $esperado) {
+    throw 'A verificação SHA-256 do pacote falhou.'
+}
+
+Expand-Archive -LiteralPath $pacote -DestinationPath . -ErrorAction Stop
+Set-Location -LiteralPath $pasta -ErrorAction Stop
+```
+
+### Iniciar o Zylpher no Windows
+
+Na pasta dos executáveis, gere a chave de API e inicie o servidor em uma
+janela separada. Use o mesmo PowerShell para as chamadas à API.
 
 ```powershell
 $bytes = New-Object byte[] 32
@@ -120,9 +192,7 @@ $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
 try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
 $env:ZYLPHER_API_KEY = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
 
-go build -o zylpher.exe ./cmd/zylpher
-if ($LASTEXITCODE -ne 0) { throw 'Falha na compilação do Zylpher.' }
-Start-Process -FilePath .\zylpher.exe
+Start-Process -FilePath .\zylpher.exe -WorkingDirectory (Get-Location).Path
 ```
 
 Quando o servidor iniciar, crie e inicie a sessão no PowerShell. O mesmo
@@ -134,7 +204,20 @@ $headers = @{ Authorization = "Bearer $env:ZYLPHER_API_KEY" }
 Invoke-RestMethod -Headers $headers -Uri "$base/health"
 Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' -Body '{"name":"default"}' -Uri "$base/sessions"
 Invoke-RestMethod -Method Post -Headers $headers -Uri "$base/sessions/default/start"
-go run ./cmd/zylpher-probe -qr-url "$base/sessions/default/qr"
+.\zylpher-probe.exe -qr-url "$base/sessions/default/qr"
+```
+
+### Compilar no Windows
+
+Para instalar a partir do código-fonte, clone a tag e compile os dois
+executáveis na raiz do repositório. Em seguida, siga as instruções em
+[Iniciar o Zylpher no Windows](#iniciar-o-zylpher-no-windows).
+
+```powershell
+git clone --branch v1.2.3 --depth 1 https://github.com/victor1mor/Zylpher.git
+Set-Location -LiteralPath Zylpher
+go build -mod=readonly -o zylpher.exe ./cmd/zylpher
+go build -mod=readonly -o zylpher-probe.exe ./cmd/zylpher-probe
 ```
 
 ## Variaveis de ambiente
@@ -226,13 +309,11 @@ go mod edit -replace=github.com/victor1mor/Zylpher=../Zylpher
 go mod tidy
 ```
 
-Quando a versão desejada estiver disponível no repositório canônico,
-remova o `replace` do módulo consumidor e instale a versão pelo Git.
-Para acesso privado, configure `GOPRIVATE` para
-`github.com/victor1mor/Zylpher` e use uma credencial Git com acesso.
+Para instalar a v1.2.3 pública, remova a diretiva local `replace` caso
+tenha configurado uma e execute o comando abaixo.
 
 ```bash
-go get github.com/victor1mor/Zylpher/client
+go get github.com/victor1mor/Zylpher/client@v1.2.3
 ```
 
 #### Prova contra o serviço no Debian 13
@@ -390,8 +471,14 @@ assinatura e grava o JSON original em SQLite antes de confirmar a entrega.
 O SHA-256 do corpo evita duplicatas em retentativas. Cada corpo pode ter até
 1 MiB, e o banco retém os eventos até que o operador faça a limpeza.
 
-Compile com `go build -mod=readonly -o zylpher-webhook-receiver
-./cmd/zylpher-webhook-receiver`. Instale o binário em `/usr/local/bin` e
+Use o `zylpher-webhook-receiver` do pacote para Linux. Em um clone do
+código-fonte, compile com o comando abaixo.
+
+```bash
+go build -mod=readonly -o zylpher-webhook-receiver ./cmd/zylpher-webhook-receiver
+```
+
+Instale o binário em `/usr/local/bin` e a unidade
 `deploy/zylpher-webhook-receiver.service` em `/etc/systemd/system`. Em
 `/etc/zylpher/webhook-receiver.env`, defina `ZYLPHER_WEBHOOK_SECRET` com o
 mesmo valor usado pelo Zylpher e restrinja o arquivo a `root` com modo `0600`.
