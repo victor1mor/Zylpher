@@ -32,9 +32,15 @@ jobs:
           - runner: macos-15
             package: macos-arm64
             arch: ARM64
+          - runner: windows-latest
+            package: windows-amd64
+            arch: X64
           - runner: windows-11-arm
             package: windows-arm64
             arch: ARM64
+          - runner: ubuntu-latest
+            package: linux-amd64
+            arch: X64
           - runner: ubuntu-24.04-arm
             package: linux-arm64
             arch: ARM64

@@ -568,7 +568,7 @@ confere a versão no README da tag. Depois do CI em Debian, Windows e macOS,
 publica os pacotes para Linux, Windows e macOS (`amd64` e `arm64`),
 o `SHA256SUMS` e o código-fonte correspondente com as dependências.
 Após a publicação, o workflow baixa os anexos, confere o SHA-256 e roda
-os três executáveis em macOS Intel, macOS ARM64, Windows ARM64 e Linux ARM64.
+os três executáveis em Linux, Windows e macOS, nas arquiteturas amd64 e arm64.
 
 Para validar o processo antes de criar uma tag, execute **Release**
 manualmente no Actions. A prova gera os mesmos pacotes com o nome
