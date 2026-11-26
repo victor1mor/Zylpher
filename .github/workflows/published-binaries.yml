@@ -30,6 +30,9 @@ jobs:
           - runner: windows-11-arm
             package: windows-arm64
             arch: ARM64
+          - runner: ubuntu-24.04-arm
+            package: linux-arm64
+            arch: ARM64
     env:
       VERSION: ${{ inputs.version }}
       PACKAGE: ${{ matrix.package }}
@@ -47,7 +50,8 @@ jobs:
           if ($arch -ne $env:EXPECTED_ARCH -or $env:RUNNER_ARCH -ne $arch) {
               throw "Arquitetura do runner inesperada: $arch / $env:RUNNER_ARCH."
           }
-          if ($IsWindows -ne $env:PACKAGE.StartsWith('windows-') -or $IsMacOS -ne $env:PACKAGE.StartsWith('macos-')) {
+          $platform = if ($IsWindows) { 'windows' } elseif ($IsMacOS) { 'macos' } elseif ($IsLinux) { 'linux' }
+          if (-not $platform -or -not $env:PACKAGE.StartsWith("$platform-")) {
               throw "Sistema do runner inesperado: $env:RUNNER_OS."
           }
           Write-Host "Target: $env:RUNNER_OS $arch"
