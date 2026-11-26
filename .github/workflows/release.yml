@@ -34,6 +34,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - name: Verify installation version in tagged README
+        if: github.event_name == 'push'
+        run: bash .github/scripts/release-readme.sh "$VERSION" --check
       - name: Build and verify release assets
         id: package
         run: |

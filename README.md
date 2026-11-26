@@ -554,8 +554,17 @@ o [roteiro com uma conta dedicada](docs/prova-midia.md).
 
 ## Publicar uma versão
 
-O workflow **Release** publica versões estáveis quando uma tag nova no
-formato `vX.Y.Z` chega ao GitHub. Depois do CI em Debian, Windows e macOS,
+Em um checkout limpo do `main`, rode o comando na raiz do clone e troque
+`vX.Y.Z` pela nova versão estável. No Windows, use o Git Bash. O Git
+usa a identidade configurada no clone para o commit e a tag.
+
+```bash
+bash .github/scripts/release-readme.sh vX.Y.Z --tag
+```
+
+O comando atualiza os links e os comandos de instalação do README,
+cria o commit e sobe `main` e a tag juntos. O workflow **Release**
+confere a versão no README da tag. Depois do CI em Debian, Windows e macOS,
 publica os pacotes para Linux, Windows e macOS (`amd64` e `arm64`),
 o `SHA256SUMS` e o código-fonte correspondente com as dependências.
 

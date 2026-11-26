@@ -91,6 +91,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Verify release draft lookup
         run: bash .github/scripts/publish-release.test.sh
+      - name: Verify versioned release README
+        run: bash .github/scripts/release-readme.test.sh
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
