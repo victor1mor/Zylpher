@@ -4,6 +4,12 @@ on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
+    inputs:
+      published_version:
+        description: Tag publicada para provar os binários no disparo manual
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: zylpher-release-${{ github.ref }}
@@ -73,3 +79,12 @@ jobs:
           VERSION: ${{ github.ref_name }}
           RELEASE_COMMIT: ${{ needs.package.outputs.commit }}
         run: bash .github/scripts/publish-release.sh "$VERSION" "$RELEASE_COMMIT" "$RUNNER_TEMP/release-assets"
+
+  verify-published:
+    needs: publish
+    if: >-
+      ${{ !cancelled() && (needs.publish.result == 'success' ||
+          (github.event_name == 'workflow_dispatch' && inputs.published_version != '')) }}
+    uses: ./.github/workflows/published-binaries.yml
+    with:
+      version: ${{ github.event_name == 'push' && github.ref_name || inputs.published_version }}

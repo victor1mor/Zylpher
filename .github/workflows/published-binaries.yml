@@ -8,6 +8,11 @@ on:
         default: v1.2.6
         required: true
         type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -62,8 +67,8 @@ jobs:
           $name = if ($IsWindows) { "$stem.zip" } else { "$stem.tar.gz" }
           $archive = Join-Path $work $name
           $manifest = Join-Path $work 'SHA256SUMS'
-          Invoke-WebRequest -Uri "$base/$name" -OutFile $archive -TimeoutSec 90
-          Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -TimeoutSec 30
+          Invoke-WebRequest -Uri "$base/$name" -OutFile $archive -TimeoutSec 90 -MaximumRetryCount 4 -RetryIntervalSec 2
+          Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -TimeoutSec 30 -MaximumRetryCount 4 -RetryIntervalSec 2
           $entries = @(Get-Content -LiteralPath $manifest | Where-Object { $_ -match ('^[a-f0-9]{64}  ' + [regex]::Escape($name) + '$') })
           if ($entries.Count -ne 1) { throw "O SHA256SUMS não tem uma entrada única para $name." }
           $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash

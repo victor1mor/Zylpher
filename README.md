@@ -567,10 +567,14 @@ cria o commit e sobe `main` e a tag juntos. O workflow **Release**
 confere a versão no README da tag. Depois do CI em Debian, Windows e macOS,
 publica os pacotes para Linux, Windows e macOS (`amd64` e `arm64`),
 o `SHA256SUMS` e o código-fonte correspondente com as dependências.
+Após a publicação, o workflow baixa os anexos, confere o SHA-256 e roda
+os três executáveis em macOS Intel, macOS ARM64, Windows ARM64 e Linux ARM64.
 
 Para validar o processo antes de criar uma tag, execute **Release**
 manualmente no Actions. A prova gera os mesmos pacotes com o nome
 `v0.0.0` e disponibiliza o conjunto como artefato `release-assets`.
+Preencha `published_version` com uma tag já publicada para incluir a
+prova dos binários baixados nessa execução manual.
 
 ## Licenca
 
