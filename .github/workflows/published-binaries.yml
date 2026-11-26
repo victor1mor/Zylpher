@@ -1,0 +1,144 @@
+name: Published binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Tag estável publicada
+        default: v1.2.6
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.package }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            package: macos-amd64
+            arch: X64
+          - runner: macos-15
+            package: macos-arm64
+            arch: ARM64
+          - runner: windows-11-arm
+            package: windows-arm64
+            arch: ARM64
+    env:
+      VERSION: ${{ inputs.version }}
+      PACKAGE: ${{ matrix.package }}
+      EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Verify and execute the published binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:VERSION -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+              throw 'Use uma tag estável no formato vX.Y.Z.'
+          }
+
+          $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToUpperInvariant()
+          if ($arch -ne $env:EXPECTED_ARCH -or $env:RUNNER_ARCH -ne $arch) {
+              throw "Arquitetura do runner inesperada: $arch / $env:RUNNER_ARCH."
+          }
+          if ($IsWindows -ne $env:PACKAGE.StartsWith('windows-') -or $IsMacOS -ne $env:PACKAGE.StartsWith('macos-')) {
+              throw "Sistema do runner inesperado: $env:RUNNER_OS."
+          }
+          Write-Host "Target: $env:RUNNER_OS $arch"
+
+          $work = (New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'zylpher-published-proof')).FullName
+          $base = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/releases/download/$env:VERSION"
+          $stem = "zylpher-$env:VERSION-$env:PACKAGE"
+          $name = if ($IsWindows) { "$stem.zip" } else { "$stem.tar.gz" }
+          $archive = Join-Path $work $name
+          $manifest = Join-Path $work 'SHA256SUMS'
+          Invoke-WebRequest -Uri "$base/$name" -OutFile $archive -TimeoutSec 90
+          Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -TimeoutSec 30
+          $entries = @(Get-Content -LiteralPath $manifest | Where-Object { $_ -match ('^[a-f0-9]{64}  ' + [regex]::Escape($name) + '$') })
+          if ($entries.Count -ne 1) { throw "O SHA256SUMS não tem uma entrada única para $name." }
+          $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+          if ($digest -ne ($entries[0] -split '\s+', 2)[0]) { throw "SHA-256 divergente: $name." }
+          Write-Host "SHA-256 OK: $name ($digest)"
+
+          $suffix = ''
+          if ($IsWindows) {
+              Expand-Archive -LiteralPath $archive -DestinationPath $work
+              $suffix = '.exe'
+          } else {
+              tar -xzf $archive -C $work
+              if ($LASTEXITCODE -ne 0) { throw 'Falha ao extrair o pacote.' }
+          }
+          $binaries = Join-Path $work $stem
+          $probe = Join-Path $binaries "zylpher-probe$suffix"
+          $help = & $probe -h 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $help -notmatch '-qr-url') { throw "zylpher-probe falhou: $help" }
+          Write-Host 'zylpher-probe: ajuda executada'
+
+          function Start-ReleaseBinary($program) {
+              $directory = (New-Item -ItemType Directory -Path (Join-Path $work $program)).FullName
+              $options = @{
+                  FilePath = Join-Path $binaries "$program$suffix"
+                  WorkingDirectory = $directory
+                  RedirectStandardOutput = Join-Path $directory 'stdout.log'
+                  RedirectStandardError = Join-Path $directory 'stderr.log'
+                  PassThru = $true
+              }
+              if ($IsWindows) { $options.WindowStyle = 'Hidden' }
+              Start-Process @options
+          }
+
+          function Wait-Endpoint($process, $url, $status, $headers = @{}) {
+              for ($i = 0; $i -lt 40; $i++) {
+                  if ($process.HasExited) { throw "O processo encerrou com código $($process.ExitCode) durante a chamada a $url." }
+                  try {
+                      $response = Invoke-WebRequest -Uri $url -Headers $headers -SkipHttpErrorCheck -TimeoutSec 2 -NoProxy
+                      if ([int]$response.StatusCode -eq $status) { return $response }
+                  } catch [System.Net.Http.HttpRequestException] {
+                      # A abertura da porta acontece depois de iniciar o processo.
+                  }
+                  Start-Sleep -Milliseconds 250
+              }
+              throw "O endpoint $url não respondeu com HTTP $status."
+          }
+
+          $processes = @()
+          try {
+              $env:ZYLPHER_API_KEY = 'published-binary-test-key'
+              $env:ZYLPHER_ADDR = '127.0.0.1:28080'
+              $engine = Start-ReleaseBinary 'zylpher'
+              $processes += $engine
+              $reply = Wait-Endpoint $engine 'http://127.0.0.1:28080/health' 200 @{ Authorization = "Bearer $env:ZYLPHER_API_KEY" }
+              if (($reply.Content | ConvertFrom-Json).status -ne 'ok') { throw 'Resposta inesperada de /health.' }
+              Write-Host 'zylpher: /health autenticado respondeu HTTP 200'
+
+              $env:ZYLPHER_WEBHOOK_SECRET = 'published-binary-test-secret'
+              $receiver = Start-ReleaseBinary 'zylpher-webhook-receiver'
+              $processes += $receiver
+              $null = Wait-Endpoint $receiver 'http://127.0.0.1:18441/ready' 204
+              if (-not (Test-Path -LiteralPath (Join-Path $work 'zylpher-webhook-receiver/events.db') -PathType Leaf)) {
+                  throw 'O receptor não criou events.db.'
+              }
+              Write-Host 'zylpher-webhook-receiver: /ready respondeu HTTP 204 e o SQLite foi aberto'
+          } finally {
+              foreach ($process in $processes) {
+                  if (-not $process.HasExited) {
+                      Stop-Process -InputObject $process -ErrorAction SilentlyContinue
+                      $null = $process.WaitForExit(5000)
+                  }
+              }
+              foreach ($program in @('zylpher','zylpher-webhook-receiver')) {
+                  foreach ($stream in @('stdout','stderr')) {
+                      $log = Join-Path $work "$program/$stream.log"
+                      if (Test-Path -LiteralPath $log) {
+                          Write-Host "$program $stream"
+                          Get-Content -LiteralPath $log
+                      }
+                  }
+              }
+          }
