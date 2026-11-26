@@ -15,7 +15,7 @@ independente baseado no `whatsmeow`.
 ## Requisitos
 
 Para instalar a partir dos binários, baixe um pacote da
-[release v1.2.3](https://github.com/victor1mor/Zylpher/releases/tag/v1.2.3)
+[release v1.2.5](https://github.com/victor1mor/Zylpher/releases/tag/v1.2.5)
 para o seu sistema e arquitetura. Os pacotes incluem `zylpher`,
 `zylpher-probe` e `zylpher-webhook-receiver`.
 
@@ -44,7 +44,7 @@ case "$arquitetura" in
   *) printf 'Arquitetura sem pacote: %s\n' "$arquitetura" >&2; exit 1 ;;
 esac
 
-versao=v1.2.3
+versao=v1.2.5
 pacote="zylpher-$versao-linux-$arquitetura.tar.gz"
 release="https://github.com/victor1mor/Zylpher/releases/download/$versao"
 curl -fLO "$release/$pacote" &&
@@ -62,7 +62,7 @@ repositório. Depois, siga o mesmo procedimento de configuração do serviço.
 ```bash
 sudo apt update
 sudo apt install ca-certificates curl git openssl
-git clone --branch v1.2.3 --depth 1 https://github.com/victor1mor/Zylpher.git
+git clone --branch v1.2.5 --depth 1 https://github.com/victor1mor/Zylpher.git
 cd Zylpher
 go build -mod=readonly -o zylpher ./cmd/zylpher
 go build -mod=readonly -o zylpher-probe ./cmd/zylpher-probe
@@ -163,7 +163,7 @@ $arquitetura = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSAr
     default { throw 'Esta arquitetura do Windows não tem pacote na release.' }
 }
 
-$versao = 'v1.2.3'
+$versao = 'v1.2.5'
 $pasta = "zylpher-$versao-windows-$arquitetura"
 $pacote = "$pasta.zip"
 $release = "https://github.com/victor1mor/Zylpher/releases/download/$versao"
@@ -214,7 +214,7 @@ executáveis na raiz do repositório. Em seguida, siga as instruções em
 [Iniciar o Zylpher no Windows](#iniciar-o-zylpher-no-windows).
 
 ```powershell
-git clone --branch v1.2.3 --depth 1 https://github.com/victor1mor/Zylpher.git
+git clone --branch v1.2.5 --depth 1 https://github.com/victor1mor/Zylpher.git
 Set-Location -LiteralPath Zylpher
 go build -mod=readonly -o zylpher.exe ./cmd/zylpher
 go build -mod=readonly -o zylpher-probe.exe ./cmd/zylpher-probe
@@ -309,11 +309,11 @@ go mod edit -replace=github.com/victor1mor/Zylpher=../Zylpher
 go mod tidy
 ```
 
-Para instalar a v1.2.3 pública, remova a diretiva local `replace` caso
+Para instalar a v1.2.5 pública, remova a diretiva local `replace` caso
 tenha configurado uma e execute o comando abaixo.
 
 ```bash
-go get github.com/victor1mor/Zylpher/client@v1.2.3
+go get github.com/victor1mor/Zylpher/client@v1.2.5
 ```
 
 #### Prova contra o serviço no Debian 13
