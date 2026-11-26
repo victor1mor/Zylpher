@@ -89,6 +89,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - name: Verify release draft lookup
+        run: bash .github/scripts/publish-release.test.sh
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod

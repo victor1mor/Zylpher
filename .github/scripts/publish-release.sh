@@ -51,6 +51,17 @@ if [[ $release == null ]]; then
         "$GITHUB_SERVER_URL" "$GH_REPO" "$version" "$marker")
     gh release create "$version" --verify-tag --draft --title "Zylpher $version" --generate-notes --notes "$notes"
     release=$(get_release)
+    # ponytail: a listagem pode levar alguns segundos para mostrar o rascunho.
+    # Após 15 s de espera, uma nova execução retoma pelo rascunho existente.
+    for delay in 1 2 4 8; do
+        [[ $release == null ]] || break
+        sleep "$delay"
+        release=$(get_release)
+    done
+    if [[ $release == null ]]; then
+        echo "O rascunho de $version ainda não aparece na listagem do GitHub." >&2
+        exit 1
+    fi
 fi
 draft=$(jq -r .draft <<< "$release")
 if [[ $draft == true ]] && ! jq -e --arg marker "$marker" '(.body // "") | contains($marker)' <<< "$release" >/dev/null; then
