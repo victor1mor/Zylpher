@@ -552,6 +552,17 @@ go build ./cmd/...
 Para repetir a prova real de foto e mensagem de voz nos dois sentidos, siga
 o [roteiro com uma conta dedicada](docs/prova-midia.md).
 
+## Publicar uma versão
+
+O workflow **Release** publica versões estáveis quando uma tag nova no
+formato `vX.Y.Z` chega ao GitHub. Depois do CI em Debian, Windows e macOS,
+publica os pacotes para Linux, Windows e macOS (`amd64` e `arm64`),
+o `SHA256SUMS` e o código-fonte correspondente com as dependências.
+
+Para validar o processo antes de criar uma tag, execute **Release**
+manualmente no Actions. A prova gera os mesmos pacotes com o nome
+`v0.0.0` e disponibiliza o conjunto como artefato `release-assets`.
+
 ## Licenca
 
 O codigo do Zylpher usa [Apache-2.0](LICENSE). Dependencias mantem suas

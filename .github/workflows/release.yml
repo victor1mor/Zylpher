@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+concurrency:
+  group: zylpher-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    if: github.event_name == 'workflow_dispatch' || github.event.created
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_gate: true
+
+  package:
+    if: github.event_name == 'workflow_dispatch' || github.event.created
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      commit: ${{ steps.package.outputs.commit }}
+    env:
+      VERSION: ${{ github.event_name == 'push' && github.ref_name || 'v0.0.0' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build and verify release assets
+        id: package
+        run: |
+          bash .github/scripts/package-release.sh "$VERSION" "$RUNNER_TEMP/release-assets"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/release-assets
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: true
+
+  publish:
+    if: github.event_name == 'push' && github.event.created
+    needs: [ci, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/release-assets
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ needs.package.outputs.commit }}
+        run: bash .github/scripts/publish-release.sh "$VERSION" "$RELEASE_COMMIT" "$RUNNER_TEMP/release-assets"
