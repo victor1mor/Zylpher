@@ -114,7 +114,7 @@ jobs:
                   try {
                       $response = Invoke-WebRequest -Uri $url -Headers $headers -SkipHttpErrorCheck -TimeoutSec 2 -NoProxy
                       if ([int]$response.StatusCode -eq $status) { return $response }
-                  } catch [System.Net.Http.HttpRequestException] {
+                  } catch [System.Net.Http.HttpRequestException], [System.OperationCanceledException] {
                       # A abertura da porta acontece depois de iniciar o processo.
                   }
                   Start-Sleep -Milliseconds 250
