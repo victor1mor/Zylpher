@@ -125,6 +125,59 @@ func TestStoppedSessionIgnoresStaleEngineStatus(t *testing.T) {
 	}
 }
 
+func TestLogoutSession(t *testing.T) {
+	eng := &logoutTestEngine{Fake: engine.NewFake(), fail: true}
+	store := storage.NewFileSessionStore(filepath.Join(t.TempDir(), "sessions.json"))
+	manager, err := session.NewManagerWithStoreAndEngine(t.Context(), store, eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(nil, manager, eng, nil)
+	for _, name := range []string{"default", "other"} {
+		doJSON[domain.Session](t, router, http.MethodPost, "/sessions", `{"name":"`+name+`"}`, http.StatusCreated)
+		doJSON[domain.Session](t, router, http.MethodPost, "/sessions/"+name+"/start", "", http.StatusOK)
+	}
+	active := doJSON[domain.Session](t, router, http.MethodGet, "/sessions/default", "", http.StatusOK)
+	other := doJSON[domain.Session](t, router, http.MethodGet, "/sessions/other", "", http.StatusOK)
+	const target = "/sessions/default/logout"
+	failed := doJSON[domain.ErrorResponse](t, router, http.MethodPost, target, "", http.StatusBadGateway)
+	if failed.Error != "logout_failed" {
+		t.Fatalf("logout failure = %+v", failed)
+	}
+	saved, err := store.Load(t.Context())
+	if err != nil || saved["default"] != active {
+		t.Fatalf("after failed logout: %v, %v", saved["default"], err)
+	}
+
+	eng.fail = false
+	stopped := doJSON[domain.Session](t, router, http.MethodPost, target, "", http.StatusOK)
+	if stopped.Status != domain.SessionStopped || stopped.CreatedAt != active.CreatedAt {
+		t.Fatalf("logout session = %+v", stopped)
+	}
+	if repeated := doJSON[domain.Session](t, router, http.MethodPost, target, "", http.StatusOK); repeated != stopped {
+		t.Fatalf("repeated logout changed session: %+v", repeated)
+	}
+	saved, err = store.Load(t.Context())
+	if err != nil || saved["default"] != stopped || saved["other"] != other {
+		t.Fatalf("after logout: %v, %v", saved, err)
+	}
+	if got := doJSON[domain.Session](t, router, http.MethodGet, "/sessions/other", "", http.StatusOK); got != other {
+		t.Fatalf("other session changed: %+v", got)
+	}
+}
+
+type logoutTestEngine struct {
+	*engine.Fake
+	fail bool
+}
+
+func (e *logoutTestEngine) Logout(ctx context.Context, session domain.Session) error {
+	if e.fail {
+		return domain.ErrLogoutFailed
+	}
+	return e.Fake.Logout(ctx, session)
+}
+
 type staleStatusEngine struct{ *engine.Fake }
 
 // WhatsApp can retain its logged-in flag after the socket is disconnected.

@@ -86,6 +86,9 @@ func TestGeneratedClientAgainstAPI(t *testing.T) {
 	if stopped, err := sdk.StopSession(ctx, name); err != nil || stopped.Status != "STOPPED" {
 		t.Fatalf("stopped = %+v, err = %v", stopped, err)
 	}
+	if loggedOut, err := sdk.LogoutSession(ctx, name); err != nil || loggedOut.Status != "STOPPED" {
+		t.Fatalf("logged out = %+v, err = %v", loggedOut, err)
+	}
 	server.Close()
 	if !eng.last.Voice || eng.last.MimeType != mimeType || string(eng.last.Data) != "OggS" {
 		t.Fatalf("upload reached engine as %+v", eng.last)

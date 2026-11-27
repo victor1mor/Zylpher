@@ -193,7 +193,7 @@ func TestWhatsAppMapsConnectionEvents(t *testing.T) {
 	defer client.Close()
 	client.session = "default"
 	statuses := make(chan domain.SessionStatus, 1)
-	client.SetStatusHandler(func(_ string, status domain.SessionStatus) { statuses <- status })
+	client.SetStatusHandler(func(_ context.Context, _ string, status domain.SessionStatus) { statuses <- status })
 
 	for event, want := range map[any]domain.SessionStatus{
 		&events.Connected{}:    domain.SessionWorking,

@@ -222,6 +222,9 @@ func (w *WhatsApp) SendMedia(ctx context.Context, session domain.Session, reques
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.loggingOut {
+		return domain.MessageResult{}, domain.ErrSessionNotWorking
+	}
 
 	upload, err := w.client.Upload(ctx, request.Data, uploadType(request.Kind))
 	if err != nil {

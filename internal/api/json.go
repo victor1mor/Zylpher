@@ -56,6 +56,8 @@ func writeDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusRequestEntityTooLarge, "media_too_large", "media exceeds the configured limit")
 	case errors.Is(err, domain.ErrRemoteFailure):
 		writeError(w, http.StatusBadGateway, "remote_failure", "remote message delivery failed")
+	case errors.Is(err, domain.ErrLogoutFailed):
+		writeError(w, http.StatusBadGateway, "logout_failed", "WhatsApp logout did not complete")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 	}

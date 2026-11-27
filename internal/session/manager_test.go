@@ -307,6 +307,10 @@ func TestManagerEmitsSessionStatus(t *testing.T) {
 
 type failingEngine struct{}
 
+func (failingEngine) Logout(context.Context, domain.Session) error {
+	return domain.ErrLogoutFailed
+}
+
 func (failingEngine) Connect(context.Context, domain.Session) error {
 	return errors.New("connection failed")
 }

@@ -84,6 +84,8 @@ func TestOpenAPIContract(t *testing.T) {
 		{"GET", "/sessions/{name}/qr", "/sessions/default/qr", "", "", 404},
 		{"POST", "/sessions/{name}/start", "/sessions/second/start", "", "", 200},
 		{"POST", "/sessions/{name}/stop", "/sessions/second/stop", "", "", 200},
+		{"POST", "/sessions/{name}/logout", "/sessions/second/logout", "", "", 200},
+		{"POST", "/sessions/{name}/logout", "/sessions/missing/logout", "", "", 404},
 		{"POST", "/sessions/{name}/messages/text", "/sessions/default/messages/text", `{"to":"12345@lid","text":"oi"}`, "application/json", 200},
 		{"POST", "/sessions/{name}/messages/media", "/sessions/default/messages/media?to=12345%40lid&kind=image", "image", "image/png", 200},
 		{"POST", "/sessions/{name}/messages/media", "/sessions/default/messages/media?to=12345%40lid&kind=image", strings.Repeat("x", 1025), "image/png", 413},

@@ -146,7 +146,19 @@ curl -fsS --retry 30 --retry-delay 1 --retry-connrefused \
 
 `sudo systemctl stop zylpher` envia `SIGINT` para encerrar o processo de forma
 graciosa. Para parar uma sessão pela API, use
-`POST /sessions/default/stop`. O QR permite vincular a conta e deve ser
+`POST /sessions/default/stop`, que mantém o pareamento. O endpoint de
+logout foi adicionado após a v1.2.9. Para desvincular o aparelho no
+WhatsApp, use a mesma chave da API.
+
+```bash
+curl -fsS -H "$auth" -X POST "$base/sessions/default/logout"
+```
+
+O logout retorna a sessão em `STOPPED` e o próximo `start` exige um novo
+pareamento. No cliente Go, use `LogoutSession`. Uma nova
+chamada de logout em uma sessão já desvinculada retorna `STOPPED`. Se o
+WhatsApp não concluir o logout, a API retorna `502 logout_failed` e a
+operação pode ser repetida. O QR permite vincular a conta e deve ser
 exibido apenas localmente.
 
 ## Executar no Windows
@@ -249,6 +261,7 @@ o arquivo na ferramenta de sua preferência e use o endereço da sua instância.
 | `POST` | `/sessions` | Cria uma sessao. |
 | `POST` | `/sessions/{name}/start` | Inicia uma sessao. |
 | `POST` | `/sessions/{name}/stop` | Para uma sessao. |
+| `POST` | `/sessions/{name}/logout` | Desvincula o aparelho, para a sessão e exige novo pareamento no próximo início. |
 | `POST` | `/sessions/{name}/messages/text` | Envia texto pela sessao `WORKING`. |
 | `POST` | `/sessions/{name}/messages/media` | Envia foto, audio (inclusive mensagem de voz), video ou documento. |
 | `GET` | `/sessions/{name}/media/{id}` | Baixa um anexo recebido. |
@@ -274,7 +287,7 @@ limite de 64 KiB e nomes de sessao aceitam ate 64 caracteres alfanumericos,
 
 ### Cliente Go gerado
 
-O pacote [`github.com/victor1mor/Zylpher/client`](client) oferece as 12
+O pacote [`github.com/victor1mor/Zylpher/client`](client) oferece as 13
 operações HTTP do `openapi.json` e usa apenas a biblioteca padrão.
 
 ```go

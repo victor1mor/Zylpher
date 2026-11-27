@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -68,6 +69,28 @@ func (p *WhatsAppPool) Disconnect(ctx context.Context, session domain.Session) e
 		return nil
 	}
 	return client.Disconnect(ctx, session)
+}
+
+func (p *WhatsAppPool) Logout(ctx context.Context, session domain.Session) error {
+	client := p.existing(session.Name)
+	if client == nil {
+		if _, err := os.Stat(p.database(session.Name)); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		var err error
+		client, err = p.client(ctx, session.Name)
+		if err != nil {
+			return err
+		}
+	}
+	if err := client.Logout(ctx, session); err != nil {
+		return err
+	}
+	// whatsmeow marks the old device as deleted. Start loads a fresh device.
+	p.mu.Lock()
+	delete(p.clients, session.Name)
+	p.mu.Unlock()
+	return client.Close()
 }
 
 func (p *WhatsAppPool) Status(ctx context.Context, session domain.Session) (domain.SessionStatus, error) {

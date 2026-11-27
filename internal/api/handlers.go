@@ -84,6 +84,15 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, session)
 }
 
+func (s *Server) handleLogoutSession(w http.ResponseWriter, r *http.Request) {
+	session, err := s.sessions.Logout(r.Context(), r.PathValue("name"))
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
 func (s *Server) handleSendText(w http.ResponseWriter, r *http.Request) {
 	var request domain.TextMessageRequest
 	if !decodeJSON(w, r, &request) {

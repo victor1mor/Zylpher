@@ -22,7 +22,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 
 	"github.com/victor1mor/Zylpher/internal/domain"
 	"github.com/victor1mor/Zylpher/internal/media"
@@ -38,6 +38,10 @@ type WhatsApp struct {
 	qrCode     string
 	pairCancel context.CancelFunc
 	media      *media.Store
+	loggingOut bool
+
+	statusCtx    context.Context
+	cancelStatus context.CancelFunc
 }
 
 const connectionTimeout = 30 * time.Second
@@ -69,7 +73,8 @@ func NewWhatsApp(ctx context.Context, database string) (*WhatsApp, error) {
 		_ = container.Close()
 		return nil, fmt.Errorf("load device: %w", err)
 	}
-	whatsapp := &WhatsApp{client: whatsmeow.NewClient(device, nil), container: container}
+	statusCtx, cancelStatus := context.WithCancel(context.Background())
+	whatsapp := &WhatsApp{client: whatsmeow.NewClient(device, nil), container: container, statusCtx: statusCtx, cancelStatus: cancelStatus}
 	whatsapp.client.SetMediaHTTPClient(&http.Client{Transport: mediaDownloadTransport{http.DefaultTransport}})
 	whatsapp.client.AddEventHandler(whatsapp.handleEvent)
 	return whatsapp, nil
@@ -129,6 +134,83 @@ func (w *WhatsApp) Disconnect(ctx context.Context, _ domain.Session) error {
 	return nil
 }
 
+func (w *WhatsApp) Logout(ctx context.Context, session domain.Session) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), connectionTimeout)
+	defer cancel()
+
+	w.mu.Lock()
+	w.loggingOut = true
+	pairing := w.pairCancel != nil
+	if pairing {
+		w.pairCancel()
+		w.pairCancel = nil
+	}
+	w.qrCode = ""
+	w.mu.Unlock()
+	defer func() {
+		if err != nil {
+			w.mu.Lock()
+			w.loggingOut = false
+			w.mu.Unlock()
+		}
+	}()
+	if pairing {
+		// Drain the pairing connection before checking whether a scan just linked it.
+		w.client.Disconnect()
+	}
+	client := w.client
+	if client.Store.ID == nil {
+		return nil
+	}
+	if !client.IsConnected() && client.IsLoggedIn() {
+		// whatsmeow can keep its authenticated flag after /stop.
+		device, err := w.container.GetFirstDevice(ctx)
+		if err != nil {
+			return fmt.Errorf("reload device for logout: %w", err)
+		}
+		if device.ID == nil {
+			return nil
+		}
+		client = whatsmeow.NewClient(device, nil)
+	}
+	if !client.IsConnected() || !client.IsLoggedIn() {
+		if session.Status == domain.SessionStopped || client != w.client {
+			defer client.Disconnect()
+		}
+		if !client.IsConnected() {
+			if err := client.ConnectContext(ctx); err != nil && !errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+				return domain.ErrLogoutFailed
+			}
+		}
+		deadline, _ := ctx.Deadline()
+		if !client.WaitForConnection(time.Until(deadline)) {
+			return domain.ErrLogoutFailed
+		}
+	}
+	if err := client.Logout(ctx); err != nil {
+		if _, storeErr := errors.AsType[*sqlite.Error](err); !storeErr {
+			disconnect, ok := errors.AsType[*whatsmeow.DisconnectedError](err)
+			if !ok || disconnect.Node == nil || disconnect.Node.Tag != "stream:error" || disconnect.Node.Attrs["code"] != "401" {
+				return domain.ErrLogoutFailed
+			}
+			conflict, ok := disconnect.Node.GetOptionalChildByTag("conflict")
+			if !ok || conflict.Attrs["type"] != "device_removed" {
+				return domain.ErrLogoutFailed
+			}
+		}
+		// A SQLite error follows the remote acknowledgement. WhatsApp can also
+		// confirm removal by closing the stream with device_removed.
+		client.Disconnect()
+		if err := client.Store.Delete(ctx); err != nil {
+			return fmt.Errorf("persist device removal: %w", err)
+		}
+	}
+	return nil
+}
+
 func (w *WhatsApp) Status(ctx context.Context, _ domain.Session) (domain.SessionStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -164,6 +246,9 @@ func (w *WhatsApp) SendText(ctx context.Context, session domain.Session, request
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.loggingOut {
+		return domain.MessageResult{}, domain.ErrSessionNotWorking
+	}
 
 	response, err := w.client.SendMessage(ctx, recipient, textMessage(request.Text))
 	if err != nil {
@@ -249,6 +334,10 @@ func (w *WhatsApp) handleEvent(event any) {
 
 func (w *WhatsApp) handleMessage(message *events.Message) {
 	w.mu.Lock()
+	if w.loggingOut {
+		w.mu.Unlock()
+		return
+	}
 	handler := w.events
 	session := w.session
 	store := w.media
@@ -283,7 +372,7 @@ func (w *WhatsApp) emitStatus(status domain.SessionStatus) {
 	w.mu.Unlock()
 	if handler != nil && session != "" {
 		// ponytail: status persistence runs outside the whatsmeow event loop.
-		go handler(session, status)
+		go handler(w.statusCtx, session, status)
 	}
 }
 
@@ -337,6 +426,7 @@ func (w *WhatsApp) Pair(ctx context.Context, render func(string)) error {
 }
 
 func (w *WhatsApp) Close() error {
+	w.cancelStatus()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.pairCancel != nil {
@@ -362,13 +452,23 @@ func (w *WhatsApp) startPairingLocked() error {
 		return fmt.Errorf("connect for pairing: %w", err)
 	}
 	w.pairCancel = cancel
-	go w.cacheQRCodes(qrChannel)
+	go w.cacheQRCodes(pairCtx, qrChannel)
 	return nil
 }
 
-func (w *WhatsApp) cacheQRCodes(qrChannel <-chan whatsmeow.QRChannelItem) {
-	for item := range qrChannel {
+func (w *WhatsApp) cacheQRCodes(ctx context.Context, qrChannel <-chan whatsmeow.QRChannelItem) {
+	for {
+		var item whatsmeow.QRChannelItem
+		select {
+		case <-ctx.Done():
+			return
+		case item = <-qrChannel:
+		}
 		w.mu.Lock()
+		if ctx.Err() != nil {
+			w.mu.Unlock()
+			return
+		}
 		switch item.Event {
 		case whatsmeow.QRChannelEventCode:
 			w.qrCode = item.Code
@@ -398,5 +498,6 @@ func databaseURI(database string) string {
 	if absolute {
 		prefix = "file://"
 	}
-	return prefix + (&url.URL{Path: path}).EscapedPath() + "?_pragma=foreign_keys%281%29"
+	pragmas := url.Values{"_pragma": {"foreign_keys(1)", "busy_timeout(2000)"}}
+	return prefix + (&url.URL{Path: path}).EscapedPath() + "?" + pragmas.Encode()
 }

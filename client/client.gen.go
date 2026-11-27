@@ -77,6 +77,11 @@ func (c *Client) GetSession(ctx context.Context, name string) (Session, error) {
 	return readJSON[Session](c.request(ctx, "GET", fmt.Sprintf("/sessions/%s", url.PathEscape(name)), 200, requestOptions{}))
 }
 
+// LogoutSession Desvincular o aparelho da sessão.
+func (c *Client) LogoutSession(ctx context.Context, name string) (Session, error) {
+	return readJSON[Session](c.request(ctx, "POST", fmt.Sprintf("/sessions/%s/logout", url.PathEscape(name)), 200, requestOptions{}))
+}
+
 // DownloadMedia Baixar um anexo recebido. Feche o corpo da resposta após a leitura.
 func (c *Client) DownloadMedia(ctx context.Context, name string, id string) (*http.Response, error) {
 	return c.request(ctx, "GET", fmt.Sprintf("/sessions/%s/media/%s", url.PathEscape(name), url.PathEscape(id)), 200, requestOptions{})

@@ -44,6 +44,7 @@ func NewRouterWithMedia(log *slog.Logger, sessions *session.Manager, eng engine.
 	mux.HandleFunc("POST /sessions", server.handleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/start", server.handleStartSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", server.handleStopSession)
+	mux.HandleFunc("POST /sessions/{name}/logout", server.handleLogoutSession)
 	mux.HandleFunc("POST /sessions/{name}/messages/text", server.handleSendText)
 	mux.HandleFunc("POST /sessions/{name}/messages/media", server.handleSendMedia)
 	mux.HandleFunc("GET /sessions/{name}/media/{id}", server.handleGetMedia)

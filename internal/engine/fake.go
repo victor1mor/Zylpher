@@ -40,6 +40,10 @@ func (f *Fake) Disconnect(ctx context.Context, session domain.Session) error {
 	return nil
 }
 
+func (f *Fake) Logout(ctx context.Context, session domain.Session) error {
+	return f.Disconnect(ctx, session)
+}
+
 func (f *Fake) Status(ctx context.Context, session domain.Session) (domain.SessionStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

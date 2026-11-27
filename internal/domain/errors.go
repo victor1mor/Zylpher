@@ -9,6 +9,7 @@ var (
 	ErrSessionNotWorking = errors.New("session not working")
 	ErrSendTimedOut      = errors.New("message send timed out")
 	ErrRemoteFailure     = errors.New("remote message delivery failed")
+	ErrLogoutFailed      = errors.New("WhatsApp logout failed")
 	ErrTooLarge          = errors.New("media too large")
 )
 

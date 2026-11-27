@@ -18,6 +18,7 @@ type Manager struct {
 	mu           sync.RWMutex
 	sessions     map[string]domain.Session
 	manualStops  map[string]bool
+	loggingOut   map[string]bool
 	store        *storage.FileSessionStore
 	engine       engine.Engine
 	eventHandler domain.EventHandler
@@ -31,7 +32,7 @@ func NewManagerWithEngine(eng engine.Engine) *Manager {
 	if eng == nil {
 		eng = engine.NewFake()
 	}
-	return &Manager{sessions: make(map[string]domain.Session), manualStops: make(map[string]bool), engine: eng}
+	return &Manager{sessions: make(map[string]domain.Session), manualStops: make(map[string]bool), loggingOut: make(map[string]bool), engine: eng}
 }
 
 func NewManagerWithStore(ctx context.Context, store *storage.FileSessionStore) (*Manager, error) {
@@ -49,7 +50,7 @@ func NewManagerWithStoreAndEngine(ctx context.Context, store *storage.FileSessio
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{sessions: sessions, manualStops: make(map[string]bool), store: store, engine: eng}, nil
+	return &Manager{sessions: sessions, manualStops: make(map[string]bool), loggingOut: make(map[string]bool), store: store, engine: eng}, nil
 }
 
 func (m *Manager) SetEventHandler(handler domain.EventHandler) {
@@ -104,7 +105,7 @@ func (m *Manager) Refresh(ctx context.Context, name string) (domain.Session, err
 	if !exists {
 		return domain.Session{}, domain.ErrNotFound
 	}
-	if m.manualStops[name] {
+	if m.manualStops[name] || m.loggingOut[name] {
 		return session, nil
 	}
 	status, err := m.engine.Status(ctx, session)
@@ -165,7 +166,7 @@ func (m *Manager) Start(ctx context.Context, name string) (domain.Session, error
 	if !exists {
 		return domain.Session{}, domain.ErrNotFound
 	}
-	if session.Status == domain.SessionStarting || session.Status == domain.SessionWorking {
+	if m.loggingOut[name] || session.Status == domain.SessionStarting || session.Status == domain.SessionWorking {
 		return domain.Session{}, domain.ErrConflict
 	}
 	return m.connectLocked(ctx, session)
@@ -219,16 +220,16 @@ func (m *Manager) reconnect(ctx context.Context, session domain.Session) error {
 }
 
 func (m *Manager) ApplyEngineStatus(ctx context.Context, name string, status domain.SessionStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	session, exists := m.sessions[name]
 	if !exists {
 		return domain.ErrNotFound
 	}
-	if m.manualStops[name] || session.Status == status {
+	if m.manualStops[name] || m.loggingOut[name] || session.Status == status {
 		return nil
 	}
 	_, err := m.setStatusLocked(ctx, session, status)
@@ -285,6 +286,9 @@ func (m *Manager) Stop(ctx context.Context, name string) (domain.Session, error)
 	if !exists {
 		return domain.Session{}, domain.ErrNotFound
 	}
+	if m.loggingOut[name] {
+		return domain.Session{}, domain.ErrConflict
+	}
 	if m.manualStops[name] {
 		return session, nil
 	}
@@ -301,6 +305,44 @@ func (m *Manager) Stop(ctx context.Context, name string) (domain.Session, error)
 		m.manualStops[name] = true
 	}
 	return stopped, err
+}
+
+func (m *Manager) Logout(ctx context.Context, name string) (domain.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.Session{}, err
+	}
+	name, err := normalizeSessionName(name)
+	if err != nil {
+		return domain.Session{}, domain.ErrInvalidInput
+	}
+	m.mu.Lock()
+	session, exists := m.sessions[name]
+	if !exists {
+		m.mu.Unlock()
+		return domain.Session{}, domain.ErrNotFound
+	}
+	if m.loggingOut[name] {
+		m.mu.Unlock()
+		return domain.Session{}, domain.ErrConflict
+	}
+	m.loggingOut[name] = true
+	m.mu.Unlock()
+
+	err = m.engine.Logout(ctx, session)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.loggingOut, name)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if session.Status != domain.SessionStopped {
+		session, err = m.setStatusLocked(context.WithoutCancel(ctx), session, domain.SessionStopped)
+	}
+	if err == nil {
+		m.manualStops[name] = true
+	}
+	return session, err
 }
 
 func (m *Manager) setStatusLocked(ctx context.Context, session domain.Session, status domain.SessionStatus) (domain.Session, error) {

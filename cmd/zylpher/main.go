@@ -89,8 +89,8 @@ func main() {
 			<-done
 		}()
 	}
-	messages.SetStatusHandler(func(name string, status domain.SessionStatus) {
-		if err := sessions.ApplyEngineStatus(context.Background(), name, status); err != nil {
+	messages.SetStatusHandler(func(ctx context.Context, name string, status domain.SessionStatus) {
+		if err := sessions.ApplyEngineStatus(ctx, name, status); err != nil && !errors.Is(err, context.Canceled) {
 			log.Warn("failed to persist engine status", "session", name, "error", err)
 		}
 	})

@@ -138,6 +138,23 @@
         }
       }
     },
+    "/sessions/{name}/logout": {
+      "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
+      "post": {
+        "operationId": "logoutSession",
+        "summary": "Desvincular o aparelho da sessão",
+        "description": "Desvincula o aparelho no WhatsApp e persiste a sessão como STOPPED. O próximo start exige pareamento. Repetir depois de um logout bem-sucedido retorna a mesma sessão STOPPED.",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Session" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/InternalError" },
+          "502": { "description": "O logout no WhatsApp não foi concluído (logout_failed).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/sessions/{name}/messages/text": {
       "parameters": [{ "$ref": "#/components/parameters/SessionName" }],
       "post": {
