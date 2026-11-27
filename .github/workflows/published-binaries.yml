@@ -95,8 +95,8 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $help -notmatch '-qr-url') { throw "zylpher-probe falhou: $help" }
           Write-Host 'zylpher-probe: ajuda executada'
 
-          function Start-ReleaseBinary($program) {
-              $directory = (New-Item -ItemType Directory -Path (Join-Path $work $program)).FullName
+          function Start-ReleaseBinary($program, $directoryName = $program) {
+              $directory = (New-Item -ItemType Directory -Path (Join-Path $work $directoryName)).FullName
               $options = @{
                   FilePath = Join-Path $binaries "$program$suffix"
                   WorkingDirectory = $directory
@@ -122,6 +122,91 @@ jobs:
               throw "O endpoint $url não respondeu com HTTP $status."
           }
 
+          function Stop-ReleaseBinary($process) {
+              if ($process -and -not $process.HasExited) {
+                  Stop-Process -InputObject $process -ErrorAction SilentlyContinue
+                  $null = $process.WaitForExit(5000)
+              }
+          }
+
+          function Reserve-StartupPort {
+              $socket = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+              $socket.ExclusiveAddressUse = $true
+              $socket.Start()
+              return $socket
+          }
+
+          function Start-WindowsTrial($trial, $port) {
+              $env:ZYLPHER_ADDR = "127.0.0.1:$port"
+              Write-Host "Partida $trial em $env:ZYLPHER_ADDR"
+              Start-ReleaseBinary 'zylpher' "windows-startup/$trial"
+          }
+
+          function Assert-WindowsHealth($process, $port, $trial) {
+              try {
+                  $reply = Wait-Endpoint $process "http://127.0.0.1:$port/health" 200 @{ Authorization = "Bearer $env:ZYLPHER_API_KEY" }
+                  if (($reply.Content | ConvertFrom-Json).status -ne 'ok') { throw 'Resposta inesperada de /health.' }
+              } catch {
+                  throw "Partida $trial falhou. $($_.Exception.Message)"
+              }
+          }
+
+          function Test-WindowsBatch($label, $count) {
+              $sockets = @()
+              $trials = @()
+              try {
+                  foreach ($i in 1..$count) { $sockets += Reserve-StartupPort }
+                  foreach ($i in 1..$count) {
+                      $socket = $sockets[$i - 1]
+                      $port = $socket.LocalEndpoint.Port
+                      $trial = "$label-$i"
+                      $socket.Stop()
+                      $trials += @{ name = $trial; port = $port; process = (Start-WindowsTrial $trial $port) }
+                  }
+                  foreach ($trial in $trials) {
+                      Assert-WindowsHealth $trial.process $trial.port $trial.name
+                  }
+                  foreach ($trial in $trials) {
+                      if ($trial.process.HasExited) {
+                          throw "Partida $($trial.name) encerrou com código $($trial.process.ExitCode) durante o lote."
+                      }
+                  }
+              } finally {
+                  foreach ($socket in $sockets) { $socket.Stop() }
+                  foreach ($trial in $trials) { Stop-ReleaseBinary $trial.process }
+              }
+          }
+
+          function Test-WindowsStartup {
+              $env:ZYLPHER_DATA_DIR = 'data'
+              $logs = (New-Item -ItemType Directory -Path (Join-Path $work 'windows-startup')).FullName
+              foreach ($i in 1..20) { Test-WindowsBatch "serial-$i" 1 }
+              foreach ($i in 1..5) { Test-WindowsBatch "parallel-$i" 8 }
+              foreach ($i in 1..5) {
+                  $socket = Reserve-StartupPort
+                  $port = $socket.LocalEndpoint.Port
+                  $collision = $null
+                  try {
+                      $collision = Start-WindowsTrial "occupied-$i" $port
+                      if (-not $collision.WaitForExit(10000)) { throw "Partida occupied-$i continuou ativa com a porta ocupada." }
+                      $logFiles = Join-Path $logs "occupied-$i/*.log"
+                      if ($collision.ExitCode -ne 1 -or -not (Get-Content -Path $logFiles | Select-String -SimpleMatch 'bind:' -Quiet)) {
+                          throw "Partida occupied-$i encerrou com código $($collision.ExitCode). Esperava código 1 e erro de bind."
+                      }
+                  } finally {
+                      Stop-ReleaseBinary $collision
+                      $socket.Stop()
+                  }
+                  $recovery = Start-WindowsTrial "recovery-$i" $port
+                  try {
+                      Assert-WindowsHealth $recovery $port "recovery-$i"
+                  } finally {
+                      Stop-ReleaseBinary $recovery
+                  }
+              }
+              Write-Host 'Windows amd64: 60 partidas limpas, 5 conflitos de porta e 5 recuperações validados.'
+          }
+
           $processes = @()
           try {
               $env:ZYLPHER_API_KEY = 'published-binary-test-key'
@@ -140,13 +225,14 @@ jobs:
                   throw 'O receptor não criou events.db.'
               }
               Write-Host 'zylpher-webhook-receiver: /ready respondeu HTTP 204 e o SQLite foi aberto'
-          } finally {
-              foreach ($process in $processes) {
-                  if (-not $process.HasExited) {
-                      Stop-Process -InputObject $process -ErrorAction SilentlyContinue
-                      $null = $process.WaitForExit(5000)
-                  }
+              if ($env:PACKAGE -eq 'windows-amd64') { Test-WindowsStartup }
+          } catch {
+              if ($env:PACKAGE -eq 'windows-amd64') {
+                  Set-Content -LiteralPath (Join-Path $work 'startup-error.log') -Value $_.Exception.Message
               }
+              throw
+          } finally {
+              foreach ($process in $processes) { Stop-ReleaseBinary $process }
               foreach ($program in @('zylpher','zylpher-webhook-receiver')) {
                   foreach ($stream in @('stdout','stderr')) {
                       $log = Join-Path $work "$program/$stream.log"
@@ -157,3 +243,13 @@ jobs:
                   }
               }
           }
+      - name: Save Windows amd64 startup logs
+        if: ${{ failure() && matrix.package == 'windows-amd64' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-amd64-startup-logs-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/zylpher-published-proof/startup-error.log
+            ${{ runner.temp }}/zylpher-published-proof/zylpher/*.log
+            ${{ runner.temp }}/zylpher-published-proof/windows-startup/*/*.log
+          if-no-files-found: ignore

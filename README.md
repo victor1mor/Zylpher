@@ -569,6 +569,9 @@ publica os pacotes para Linux, Windows e macOS (`amd64` e `arm64`),
 o `SHA256SUMS` e o código-fonte correspondente com as dependências.
 Após a publicação, o workflow baixa os anexos, confere o SHA-256 e roda
 os três executáveis em Linux, Windows e macOS, nas arquiteturas amd64 e arm64.
+No Windows amd64, a prova inclui 60 partidas limpas, cinco conflitos de porta
+e cinco recuperações. Em caso de falha, os logs de partida ficam no artefato
+`windows-amd64-startup-logs-*` da execução.
 
 Para validar o processo antes de criar uma tag, execute **Release**
 manualmente no Actions. A prova gera os mesmos pacotes com o nome
